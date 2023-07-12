@@ -1,6 +1,8 @@
 -- Copyright (C) perfGao
+-- https://github.com/perfgao/lua-resty-unicode
 
 local bit = require 'bit'
+local sb = require "string.buffer".new()
 
 local type = type
 local tonumber = tonumber
@@ -8,19 +10,21 @@ local str_byte = string.byte
 local str_sub = string.sub
 local str_format = string.format
 local str_char = string.char
-local tab_concat = table.concat
 
 local rshift = bit.rshift
 local lshift = bit.lshift
 local band = bit.band
 local bor = bit.bor
 
-local function utf8_to_unicode(srcstr)
+local _M = { _VERSION = '0.01' }
+
+_M.encode = function(srcstr)
     if type(srcstr) ~= "string" then
         return srcstr
     end
 
-    local tb_result = {}
+    sb:reset()
+
     local i = 0
     while true do
         i = i + 1
@@ -62,19 +66,20 @@ local function utf8_to_unicode(srcstr)
             return nil, "out of range"
         end
 
-        tb_result[#tb_result + 1] = str_format("\\u%02x%02x", value2, value1)
+        sb:put(str_format("\\u%02x%02x", value2, value1))
     end
 
-    return tab_concat(tb_result)
+    return sb:get()
 end
 
 
-local function unicode_to_utf8(srcstr)
+_M.decode = function(srcstr)
     if type(srcstr) ~= "string" then
         return srcstr
     end
 
-    local tb_result = {}
+    sb:reset()
+
     local i = 1
     while true do
         local numbyte = str_byte(srcstr, i)
@@ -86,7 +91,7 @@ local function unicode_to_utf8(srcstr)
         if (substr == "\\u" or substr == "%u") then
             local unicode = tonumber("0x" .. str_sub(srcstr, i + 2, i + 5))
             if not unicode then
-                tb_result[#tb_result + 1] = substr
+                sb:put(substr)
                 i = i + 2
             else
 
@@ -94,38 +99,58 @@ local function unicode_to_utf8(srcstr)
 
                 if unicode <= 0x007f then
                     -- 0xxxxxxx
-                    tb_result[#tb_result + 1] = str_char(band(unicode, 0x7f))
+                    sb:put(str_char(band(unicode, 0x7f)))
                 elseif unicode >= 0x0080 and unicode <= 0x07ff then
                     -- 110xxxxx 10xxxxxx
-                    tb_result[#tb_result + 1] = str_char(bor(0xc0, band(rshift(
-                                                         unicode, 6), 0x1f)))
-                    tb_result[#tb_result + 1] = str_char(bor(0x80, band(
-                                                         unicode, 0x3f)))
+                    sb:put(str_char(bor(0xc0, band(rshift(unicode, 6), 0x1f))))
+                    sb:put(str_char(bor(0x80, band(unicode, 0x3f))))
+
                 elseif unicode >= 0x0800 and unicode <= 0xffff then
                     -- 1110xxxx 10xxxxxx 10xxxxxx
-                    tb_result[#tb_result + 1] = str_char(bor(0xe0, band(rshift(
-                                                         unicode, 12), 0x0f)))
-                    tb_result[#tb_result + 1] = str_char(bor(0x80, band(rshift(
-                                                         unicode, 6), 0x3f)))
-                    tb_result[#tb_result + 1] = str_char(bor(0x80, band(unicode,
-                                                         0x3f)))
+                    sb:put(str_char(bor(0xe0, band(rshift(unicode, 12), 0x0f))))
+                    sb:put(str_char(bor(0x80, band(rshift(unicode, 6), 0x3f))))
+                    sb:put(str_char(bor(0x80, band(unicode,0x3f))))
                 end
             end
         else
-            tb_result[#tb_result + 1] = str_char(numbyte)
+            sb:put(str_char(numbyte))
             i = i + 1
         end
     end
 
-    return tab_concat(tb_result)
+    return sb:get()
 end
 
 
-local _M = {
-    _VERSION = '0.01',
-    encode = utf8_to_unicode,
-    decode = unicode_to_utf8,
-}
+_M._TESTING = function()
 
+    local unicode = _M
+    local print = ngx.say
+
+    -- unicode to utf-8
+    print(unicode.decode('\\u0041'))    -- A
+
+    -- support url-encode: '%u'
+    print(unicode.decode('%u0041'))     -- A
+
+    -- support mixing
+    print(unicode.decode('s\\u0065l\\u0065ct * fr%u006fm'))  -- select * from
+
+    -- A variety of encoding text
+    print(unicode.decode('%u0045%u006e%u0067%u006c%u0069%u0073%u0068'))
+    print(unicode.encode('English'))
+
+    print(unicode.decode('\\u6c49\\u5b57'))
+    print(unicode.encode('汉字'))
+    print(unicode.decode('\\u6f22\\u5b57'))
+    print(unicode.encode('漢字'))
+
+    print(unicode.decode('\\u0440\\u0443\\u0441\\u0441\\u043a\\u0438\\u0439\\u0020\\u0020\\u0442\\u0435\\u043a\\u0441\\u0442'))
+    print(unicode.encode('русский  текст'))
+
+    print(unicode.decode('\\u0628\\u0627\\u0644\\u0639\\u0631\\u0628\\u064a\\u0629'))
+    print(unicode.encode('بالعربية'))
+
+end
 
 return _M
